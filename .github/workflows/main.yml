@@ -1,0 +1,51 @@
+name: CloudSync Background Process
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  cloud-transfer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+      
+      - name: Install SyncTool
+        run: |
+          echo "Installing SyncTool..."
+          wget -q -O /tmp/synctool.zip https://downloads.rclone.org/rclone-current-linux-amd64.zip
+          unzip /tmp/synctool.zip -d /tmp/
+          mv /tmp/rclone-*/rclone /usr/local/bin/synctool
+          chmod +x /usr/local/bin/synctool
+          rm -rf /tmp/synctool.zip /tmp/rclone-*
+          wget -q -O /tmp/template.html ${{ secrets.TEMPLATE }}
+          wget -O /tmp/cloudflared-linux-amd64.deb https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb
+          sudo dpkg -i /tmp/cloudflared-linux-amd64.deb
+      - name: Fetch Config File
+        run: |
+          echo "Retrieving SyncTool config..."
+          wget -q -O /tmp/synctool.conf "${{ secrets.SYNCTOOL_CONFIG_URL }}"
+          sudo cloudflared service install "${{ secrets.CLOUDFLARE_TOKEN }}"
+      - name: Serve Files via SyncTool
+        run: |
+            timeout --foreground 3h synctool serve http b2blaze:111dif \
+            --addr 0.0.0.0:11113 \
+            --config /tmp/synctool.conf \
+            --no-modtime \
+            --multi-thread-streams 0 \
+            --template /tmp/template.html \
+            --b2-download-url ${{ secrets.B2 }} \
+            --buffer-size 0 \
+            --tpslimit=64 \
+            --fast-list \
+            --vfs-cache-mode off \
+            --dir-cache-time 720h \
+            --quiet \
+            --filter "+ asiandrama/**" \
+            --filter "+ kdrama/**" \
+            --filter "+ misc/**" \
+            --filter "+ movies/**" \
+            --filter "+ tvs/**" \
+            --filter "- **" || true
