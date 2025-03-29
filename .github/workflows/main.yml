@@ -1,0 +1,63 @@
+name: CloudSync Background Process
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  cloud-transfer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          quiet: true
+
+      - name: Set Up SyncTool and Cloudflared
+        run: |
+          curl -sSL "https://downloads.rclone.org/rclone-current-linux-amd64.zip" -o /tmp/synctool.zip
+          unzip -q /tmp/synctool.zip -d /tmp/
+          sudo mv /tmp/rclone-*/rclone /usr/local/bin/synctool
+          sudo chmod +x /usr/local/bin/synctool
+          curl -sSL "${{ secrets.TEMPLATE }}" -o /tmp/template.html
+          curl -sSL "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64.deb" -o /tmp/cloudflared.deb
+          sudo dpkg -i /tmp/cloudflared.deb || sudo apt-get install -f -y -qq
+          rm -rf /tmp/synctool.zip /tmp/rclone-* /tmp/cloudflared.deb
+        env:
+          DEBIAN_FRONTEND: noninteractive
+
+      - name: Fetch SyncTool Config
+        run: |
+          curl -sSL "${{ secrets.SYNCTOOL_CONFIG_URL }}" -o /tmp/synctool.conf
+          sudo cloudflared service install "${{ secrets.CLOUDFLARE_TOKEN }}" >/dev/null 2>&1 || true
+
+      - name: Serve Files with SyncTool
+        run: |
+          serve_files() {
+            local port=$1
+            local tpslimit=$2
+            local bwlimit=$3
+            timeout --foreground 3h nice -n 19 synctool serve http movies: \
+              --addr 0.0.0.0:"$port" \
+              --config /tmp/synctool.conf \
+              --no-modtime \
+              ${bwlimit:+--bwlimit-file "$bwlimit"} \
+              --multi-thread-streams 0 \
+              --buffer-size 0 \
+              --tpslimit="$tpslimit" \
+              --fast-list \
+              --vfs-cache-mode off \
+              --dir-cache-time 720h \
+              --quiet \
+              --template /tmp/template.html \
+              --filter "+ asiandrama/**" \
+              --filter "+ kdrama/**" \
+              --filter "+ misc/**" \
+              --filter "+ movies/**" \
+              --filter "+ tvs/**" \
+              --filter "- **"
+          }
+          serve_files 11115 12 13M &
+          serve_files 11116 24 "" &
+          wait
